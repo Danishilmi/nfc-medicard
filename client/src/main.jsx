@@ -6,6 +6,7 @@ import { AuthProvider } from "./context/AuthContext.jsx";
 import { ThemeProvider } from "./context/ThemeContext.jsx";
 import { ToastProvider } from "./context/ToastContext.jsx";
 import { UnreadProvider } from "./context/UnreadContext.jsx";
+import { NotificationsProvider } from "./context/NotificationsContext.jsx";
 import { LanguageProvider, useLanguage } from "./i18n/LanguageContext.jsx";
 import "./index.css";
 
@@ -23,7 +24,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <BrowserRouter>
             <AuthProvider>
               <UnreadProvider>
-                <LocalisedApp />
+                <NotificationsProvider>
+                  <LocalisedApp />
+                </NotificationsProvider>
               </UnreadProvider>
             </AuthProvider>
           </BrowserRouter>

@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useTheme } from "../context/ThemeContext.jsx";
 import logo from "../assets/logo.png";
 import LanguageSwitcher from "./LanguageSwitcher.jsx";
+import NotificationBell from "./NotificationBell.jsx";
 import { t } from "../i18n/index.js";
 
 export default function PortalLayout({ navItems, title }) {
@@ -30,7 +31,10 @@ export default function PortalLayout({ navItems, title }) {
           <img src={logo} alt="NFC MediCard" className="h-7 w-7 object-contain" />
           <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">NFC MediCard</p>
         </div>
-        <LanguageSwitcher compact align="end" />
+        <div className="flex items-center gap-2">
+          <NotificationBell variant="bar" />
+          <LanguageSwitcher compact align="end" />
+        </div>
       </div>
 
       {/* Mobile backdrop */}
@@ -95,13 +99,17 @@ export default function PortalLayout({ navItems, title }) {
           </div>
           <div className="mb-1 flex items-center justify-between px-1 md:justify-center lg:justify-between">
             <p className="truncate text-xs text-slate-500 md:hidden lg:block dark:text-slate-400">{profile?.email}</p>
-            <button
-              onClick={toggleTheme}
-              aria-label={t("Toggle dark mode")}
-              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-            >
-              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
+            {/* the bell is in the top bar on phones, so only here from tablet size up */}
+            <div className="flex items-center gap-1 md:flex-col lg:flex-row">
+              <NotificationBell className="hidden md:block" />
+              <button
+                onClick={toggleTheme}
+                aria-label={t("Toggle dark mode")}
+                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+            </div>
           </div>
           <button
             onClick={logout}

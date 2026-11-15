@@ -2,6 +2,7 @@ import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logAudit } from "../lib/audit.js";
+import { notify } from "../lib/notify.js";
 
 const router = Router();
 
@@ -57,6 +58,7 @@ router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
 
   await logAudit(req.user, "queue.checkin", "patient", patient.id, { number: data.number, room, name: patient.name });
+  await notify(patient.id, "queue.checkin", { number: data.number, room }, "/patient");
   res.status(201).json(toJson(data));
 });
 

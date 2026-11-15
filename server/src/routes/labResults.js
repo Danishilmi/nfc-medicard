@@ -4,6 +4,7 @@ import { supabase, LAB_RESULTS_BUCKET } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { uploadBuffer } from "../lib/upload.js";
 import { logAudit } from "../lib/audit.js";
+import { notify, careTeamIds, patientName } from "../lib/notify.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -78,6 +79,13 @@ router.post(
       .single();
     if (error) return res.status(400).json({ error: error.message });
     await logAudit(req.user, "lab_result.create", "patient", patientId, { testName });
+    await notify(patientId, "lab.new", { test: testName, flagged: data.flagged }, "/patient/labs");
+    if (data.flagged) {
+      // an abnormal result goes to every doctor treating this patient, not only the one who added it
+      const team = (await careTeamIds(patientId)).filter((id) => id !== req.user.uid);
+      await notify(team, "lab.abnormal", { patient: await patientName(patientId), test: testName, by: req.user.name || req.user.email },
+        `/doctor/patient/${patientId}?tab=Lab%20Results`);
+    }
     res.status(201).json(toJson(data));
   }
 );

@@ -97,6 +97,13 @@ const db = {
     { id: "vital-1", patient_id: "patient-1", heart_rate: 78, note: "Resting, ward round", recorded_at: "2026-06-02T04:00:00.000Z" },
   ],
   audit_log: [],
+  notifications: [
+    { id: "ntf-1", user_id: "patient-1", type: "card.scanned", data: { by: "Dr. Sarah Jenkins", hospital: "Hospital Kuala Lumpur (HKL)", method: "nfc" }, link: "/patient/profile", ref: null, read: false, created_at: "2026-10-28T01:24:00.000Z" },
+    { id: "ntf-2", user_id: "patient-1", type: "lab.new", data: { test: "HbA1c & Fasting Plasma Glucose", flagged: true }, link: "/patient/labs", ref: null, read: false, created_at: "2026-10-28T04:00:00.000Z" },
+    { id: "ntf-3", user_id: "patient-1", type: "lab.new", data: { test: "12-Lead Resting ECG", flagged: false }, link: "/patient/labs", ref: null, read: true, created_at: "2026-10-05T04:00:00.000Z" },
+    { id: "ntf-4", user_id: "doctor-1", type: "message.new", data: { from: "Ahmad Faiz Bin Rahman" }, link: "/doctor/patient/patient-1?tab=Message", ref: null, read: false, created_at: "2026-06-02T09:15:00.000Z" },
+    { id: "ntf-5", user_id: "admin-1", type: "card.unknown", data: { cardUid: "0A1B2C3D", by: "Dr. Robert Chan" }, link: "/admin/audit-log", ref: null, read: false, created_at: "2026-10-30T02:10:00.000Z" },
+  ],
 };
 
 function findUserByUid(u) {
@@ -338,6 +345,11 @@ app.post("/api/lab-results", requireAuth, requireRole("admin", "doctor"), upload
   };
   db.lab_results.unshift(row);
   logAudit(req.user, "lab_result.create", "patient", patientId, { testName });
+  notify(patientId, "lab.new", { test: testName, flagged: row.flagged }, "/patient/labs");
+  if (row.flagged) {
+    const name = db.patients.find((x) => x.id === patientId)?.name || "";
+    notify(careTeamIds(patientId).filter((id) => id !== req.user.uid), "lab.abnormal", { patient: name, test: testName, by: req.user.name || req.user.email }, `/doctor/patient/${patientId}?tab=Lab%20Results`);
+  }
   res.status(201).json(toLabJson(row));
 });
 
@@ -360,6 +372,7 @@ app.post("/api/radiology", requireAuth, requireRole("admin", "doctor"), upload.s
   };
   db.radiology.unshift(row);
   logAudit(req.user, "radiology.create", "patient", patientId, { type });
+  notify(patientId, "imaging.new", { type, anatomy: anatomy || "" }, "/patient/radiology");
   res.status(201).json(toRadiologyJson(row));
 });
 
@@ -368,8 +381,13 @@ const SCAN_METHODS = new Set(["nfc", "qr", "manual"]);
 app.get("/api/nfc/:cardUid", requireAuth, requireRole("admin", "doctor"), (req, res) => {
   const method = SCAN_METHODS.has(req.query.method) ? req.query.method : "manual";
   const p = db.patients.find((x) => x.card_uid === req.params.cardUid);
-  if (!p) return res.status(404).json({ error: "This card is not registered to any patient." });
+  if (!p) {
+    notify(adminIds().filter((id) => id !== req.user.uid), "card.unknown", { cardUid: req.params.cardUid, by: req.user.name || req.user.email }, "/admin/audit-log");
+    return res.status(404).json({ error: "This card is not registered to any patient." });
+  }
   logAudit(req.user, "nfc.scan", "patient", p.id, { cardUid: req.params.cardUid, method });
+  const hospital = (db.doctors || []).find((d) => d.id === req.user.uid)?.hospital || null;
+  notify(p.id, "card.scanned", { by: req.user.name || req.user.email, hospital, method }, "/patient/profile");
   res.json(toEmergencyProfileJson(p));
 });
 
@@ -392,6 +410,50 @@ app.post("/api/nfc/register", requireAuth, requireRole("admin"), (req, res) => {
   db.patients.push(row);
   logAudit(req.user, "nfc.register", "patient", id, { cardUid, name });
   res.status(201).json(toPatientJson(row));
+});
+
+// ---- notifications (the bell) ----------------------------------------------
+function notify(userIds, type, data = {}, link = null, ref = null) {
+  for (const userId of new Set([].concat(userIds).filter(Boolean))) {
+    if (ref && db.notifications.some((n) => n.user_id === userId && n.ref === ref)) continue;
+    db.notifications.unshift({ id: uid("ntf"), user_id: userId, type, data, link, ref, read: false, created_at: now() });
+  }
+}
+const adminIds = () => db.profiles.filter((p) => p.role === "admin").map((p) => p.id);
+const careTeamIds = (patientId) => [...new Set(db.medical_history.filter((h) => h.patient_id === patientId).map((h) => h.physician_id))];
+const myToday = (offsetMs = 0) => ({
+  date: new Date(Date.now() + offsetMs).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
+  time: new Date(Date.now() + offsetMs).toLocaleTimeString("en-GB", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
+});
+function createDueReminders(user) {
+  const today = myToday(), tomorrow = myToday(24 * 3600 * 1000).date, inAnHour = myToday(3600 * 1000).time;
+  if (user.role === "patient") {
+    for (const a of db.appointments.filter((x) => x.patient_id === user.uid)) {
+      const data = { doctor: a.doctor_name, date: a.date, time: a.start_time || null };
+      if (a.date === tomorrow) notify(user.uid, "appointment.reminder", { ...data, when: "tomorrow" }, "/patient/appointments", `appt-day:${a.id}`);
+      else if (a.date === today.date && a.start_time && a.start_time >= today.time && a.start_time <= inAnHour)
+        notify(user.uid, "appointment.reminder", { ...data, when: "soon" }, "/patient/appointments", `appt-hour:${a.id}`);
+    }
+  }
+  if (user.role === "doctor") {
+    const count = db.appointments.filter((a) => a.doctor_id === user.uid && a.date === today.date).length;
+    if (count) notify(user.uid, "appointments.today", { count }, "/doctor/appointments", `daily:${today.date}`);
+  }
+}
+const toNotificationJson = (n) => ({ id: n.id, type: n.type, data: n.data, link: n.link, read: n.read, createdAt: n.created_at });
+
+app.get("/api/notifications", requireAuth, (req, res) => {
+  createDueReminders(req.user);
+  res.json(db.notifications.filter((n) => n.user_id === req.user.uid).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50).map(toNotificationJson));
+});
+app.get("/api/notifications/unread-count", requireAuth, (req, res) => {
+  createDueReminders(req.user);
+  res.json({ count: db.notifications.filter((n) => n.user_id === req.user.uid && !n.read).length });
+});
+app.post("/api/notifications/read", requireAuth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? new Set(req.body.ids) : null;
+  db.notifications.forEach((n) => { if (n.user_id === req.user.uid && (!ids || ids.has(n.id))) n.read = true; });
+  res.json({ ok: true });
 });
 
 // ---- messages ------------------------------------------------------
@@ -456,6 +518,8 @@ app.post("/api/messages", requireAuth, (req, res) => {
     sender_role: req.user.role, sender_name: req.user.name || req.user.email, text, read: false, created_at: now(),
   };
   db.messages.unshift(row);
+  if (req.user.role === "patient") notify(toDoctor, "message.new", { from: row.sender_name }, `/doctor/patient/${patientId}?tab=Message`);
+  else notify(patientId, "message.new", { from: row.sender_name }, "/patient/messages");
   res.status(201).json(toMessageJson(row));
 });
 
@@ -497,6 +561,7 @@ app.post("/api/appointments", requireAuth, requireRole("admin", "doctor"), (req,
     doctor_name: req.user.name || req.user.email, date, start_time: time, notes: notes || "", status: "scheduled", created_at: now(),
   };
   db.appointments.push(row);
+  notify(patientId, "appointment.booked", { doctor: row.doctor_name, date, time }, "/patient/appointments");
   res.status(201).json(toAppointmentJson(row));
 });
 

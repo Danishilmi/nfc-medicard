@@ -4,6 +4,7 @@ import { supabase, AVATARS_BUCKET } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { toPatientJson } from "./users.js";
 import { logAudit } from "../lib/audit.js";
+import { notify, adminIds } from "../lib/notify.js";
 import { uploadBuffer } from "../lib/upload.js";
 import { getClientOrigin } from "../lib/env.js";
 
@@ -98,6 +99,10 @@ router.post("/", requireAuth, requireRole("admin", "doctor"), async (req, res) =
       registeredBy: req.user.name || req.user.email,
     });
     await logAudit(req.user, "patient.register", "patient", patient.uid, { name: patient.name, manual: true });
+    if (req.user.role === "doctor") {
+      // a doctor registered them without a card: the admins can issue one
+      await notify(await adminIds(), "patient.registered", { patient: patient.name, by: req.user.name || req.user.email }, "/admin/patients");
+    }
     res.status(201).json(patient);
   } catch (err) {
     console.error("Manual patient registration failed:", err);

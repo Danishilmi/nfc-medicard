@@ -275,3 +275,18 @@ create table if not exists queue_tickets (
 alter table queue_tickets enable row level security;
 create index if not exists queue_tickets_patient_id_idx on queue_tickets(patient_id);
 create index if not exists queue_tickets_created_at_idx on queue_tickets(created_at desc);
+
+create table if not exists notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references profiles(id) on delete cascade,
+  type text not null,
+  data jsonb not null default '{}'::jsonb,
+  link text,
+  ref text,
+  read boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (user_id, ref)
+);
+
+alter table notifications enable row level security;
+create index if not exists notifications_user_created_idx on notifications(user_id, created_at desc);

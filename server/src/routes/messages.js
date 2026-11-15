@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { notify } from "../lib/notify.js";
 
 const router = Router();
 
@@ -150,6 +151,13 @@ router.post("/", requireAuth, async (req, res) => {
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
+  const from = req.user.name || req.user.email;
+  if (req.user.role === "patient") {
+    // a message to the whole care team (no doctor yet) stays in every doctor's inbox, without a bell alert
+    await notify(toDoctor, "message.new", { from }, `/doctor/patient/${patientId}?tab=Message`);
+  } else {
+    await notify(patientId, "message.new", { from }, "/patient/messages");
+  }
   res.status(201).json(toJson(data));
 });
 

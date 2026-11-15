@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { createPatientAccount } from "./patients.js";
 import { logAudit } from "../lib/audit.js";
+import { notify, adminIds } from "../lib/notify.js";
 
 const router = Router();
 
@@ -41,9 +42,19 @@ router.get("/:cardUid", requireAuth, requireRole("admin", "doctor"), async (req,
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) {
+    // tell the admins: it may be a lost card from another system, or someone trying cards
+    await notify((await adminIds()).filter((id) => id !== req.user.uid), "card.unknown",
+      { cardUid: req.params.cardUid, by: req.user.name || req.user.email }, "/admin/audit-log");
     return res.status(404).json({ error: "This card is not registered to any patient." });
   }
   await logAudit(req.user, "nfc.scan", "patient", data.id, { cardUid: req.params.cardUid, method });
+  // the patient always knows when their record is opened with their card
+  let hospital = null;
+  if (req.user.role === "doctor") {
+    const { data: doctor } = await supabase.from("doctors").select("hospital").eq("id", req.user.uid).maybeSingle();
+    hospital = doctor?.hospital || null;
+  }
+  await notify(data.id, "card.scanned", { by: req.user.name || req.user.email, hospital, method }, "/patient/profile");
   res.json(toEmergencyProfileJson(data));
 });
 

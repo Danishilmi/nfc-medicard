@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { malaysiaNow } from "../lib/time.js";
+import { notify } from "../lib/notify.js";
 
 const router = Router();
 
@@ -60,16 +62,6 @@ router.get("/", requireAuth, async (req, res) => {
   res.json(data.map(toJson));
 });
 
-// Today's date (YYYY-MM-DD) and the time now (HH:MM) in Malaysia: the server
-// runs on UTC, which is still "yesterday" until 8 am Malaysian time.
-function malaysiaNow() {
-  const now = new Date();
-  return {
-    date: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
-    time: now.toLocaleTimeString("en-GB", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
-  };
-}
-
 router.post("/", requireAuth, requireRole("admin", "doctor"), async (req, res) => {
   const { patientId, date, notes } = req.body;
   // Optional, so older app versions that only send a date keep working.
@@ -105,6 +97,7 @@ router.post("/", requireAuth, requireRole("admin", "doctor"), async (req, res) =
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
+  await notify(patientId, "appointment.booked", { doctor: req.user.name || req.user.email, date, time }, "/patient/appointments");
   res.status(201).json(toJson(data));
 });
 

@@ -3,6 +3,7 @@ import multer from "multer";
 import { supabase, MEDICAL_IMAGES_BUCKET } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logAudit } from "../lib/audit.js";
+import { notify, patientName } from "../lib/notify.js";
 import { uploadBuffer } from "../lib/upload.js";
 
 const router = Router();
@@ -125,6 +126,11 @@ router.post(
       referredToDoctor: typedDoctorName || undefined,
       referredToDepartment: referredToDepartment?.trim() || undefined,
     });
+    if (referredDoctor?.id && referredDoctor.id !== req.user.uid) {
+      await notify(referredDoctor.id, "referral.received",
+        { patient: await patientName(patientId), by: req.user.name || req.user.email, diagnosis },
+        `/doctor/patient/${patientId}?tab=History`);
+    }
     res.status(201).json(toJson(data));
   }
 );
