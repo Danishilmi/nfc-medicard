@@ -131,3 +131,45 @@ describe("GET /api/queue/mine", () => {
     expect(res.body.room).toBe("Room 2");
   });
 });
+
+describe("PATCH /api/queue/:id/call", () => {
+  const ticket = { id: "t1", patient_id: "p1", patient_name: "Ahmad Faiz", number: 7, room: "Room 3", status: "waiting", created_at: new Date().toISOString() };
+
+  it("rejects a patient calling themselves in", async () => {
+    currentUser = { uid: "p1", role: "patient", name: "Ahmad Faiz", email: "patient@medicard.dev" };
+    const res = await request(buildApp()).patch("/api/queue/t1/call");
+    expect(res.status).toBe(403);
+  });
+
+  it("calls the patient in, tells them it's their turn, and tells the next person they're next", async () => {
+    const made = [];
+    mockSupabase.from.mockImplementation((table) => {
+      let result = { data: null, error: null };
+      if (table === "queue_tickets") {
+        const n = made.filter((m) => m.table === "queue_tickets").length;
+        result = [
+          { data: ticket, error: null },
+          { data: { ...ticket, status: "called", called_at: new Date().toISOString(), called_by: "System Administrator" }, error: null },
+          { data: { ...ticket, id: "t2", patient_id: "p2", number: 8 }, error: null },
+        ][n];
+      }
+      const q = chain(result);
+      made.push({ table, q });
+      return q;
+    });
+
+    const res = await request(buildApp()).patch("/api/queue/t1/call");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("called");
+    const sent = made.filter((m) => m.table === "notifications").flatMap((m) => [...m.q.insert.mock.calls, ...m.q.upsert.mock.calls].map((c) => c[0][0]));
+    expect(sent.map((r) => [r.user_id, r.type, r.data.room])).toEqual([["p1", "queue.called", "Room 3"], ["p2", "queue.next", "Room 3"]]);
+    mockSupabase.from.mockReset();
+  });
+
+  it("won't call someone who has already been seen", async () => {
+    mockSupabase.from.mockReturnValueOnce(chain({ data: { ...ticket, status: "done" }, error: null }));
+    const res = await request(buildApp()).patch("/api/queue/t1/call");
+    expect(res.status).toBe(400);
+  });
+});

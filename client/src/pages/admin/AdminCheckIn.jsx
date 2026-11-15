@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Nfc, Usb, QrCode, ArrowRight, ClipboardList, DoorOpen, RotateCcw } from "lucide-react";
+import { Nfc, Usb, QrCode, ArrowRight, ClipboardList, DoorOpen, RotateCcw, Megaphone, Check } from "lucide-react";
 import api from "../../lib/api.js";
 import Card from "../../components/Card.jsx";
 import Avatar from "../../components/Avatar.jsx";
@@ -10,6 +10,8 @@ import QrScannerView from "../../components/QrScannerView.jsx";
 import { t } from "../../i18n/index.js";
 
 const ROOM_SUGGESTIONS = ["Room 1", "Room 2", "Room 3", "Room 4", "Consultation A", "Consultation B"];
+
+const STATUS_LABELS = { waiting: "Waiting", called: "Called in", done: "Seen" };
 
 export default function AdminCheckIn() {
   const toast = useToast();
@@ -39,6 +41,23 @@ export default function AdminCheckIn() {
   };
 
   useEffect(loadToday, []);
+
+  // Calling in sends the patient an "it's your turn" notification with a chime.
+  const [busyId, setBusyId] = useState(null);
+  const updateTicket = async (tk, action, message) => {
+    setBusyId(tk.id);
+    try {
+      const { data } = await api.patch(`/queue/${tk.id}/${action}`);
+      setToday((list) => list.map((x) => (x.id === data.id ? data : x)));
+      if (message) toast.success(message);
+    } catch (err) {
+      toast.error(err.response?.data?.error || t("Something went wrong."));
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const callIn = (tk) => updateTicket(tk, "call", t("{name} has been called in to {room}.", { name: tk.patientName, room: tk.room }));
+  const markDone = (tk) => updateTicket(tk, "done");
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => {
     if (step === "scan") manualInputRef.current?.focus();
@@ -325,13 +344,45 @@ export default function AdminCheckIn() {
             </div>
           ) : (
             <ul className="space-y-2">
-              {today.map((t) => (
-                <li key={t.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
-                  <div>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{t.patientName}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{t.room}</p>
+              {today.map((tk) => (
+                <li
+                  key={tk.id}
+                  className={`rounded-lg px-3 py-2 ${
+                    tk.status === "called" ? "bg-red-50 ring-1 ring-red-200 dark:bg-red-950/30 dark:ring-red-900" : "bg-slate-50 dark:bg-slate-800/60"
+                  } ${tk.status === "done" ? "opacity-60" : ""}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{tk.patientName}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {tk.room} &middot;{" "}
+                        <span className={tk.status === "called" ? "font-semibold text-red-600 dark:text-red-400" : ""}>
+                          {t(STATUS_LABELS[tk.status] || "Waiting")}
+                        </span>
+                      </p>
+                    </div>
+                    <span className="flex-shrink-0 text-sm font-bold text-brand-700 dark:text-brand-300">#{tk.number}</span>
                   </div>
-                  <span className="text-sm font-bold text-brand-700 dark:text-brand-300">#{t.number}</span>
+                  {tk.status !== "done" && (
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={() => callIn(tk)}
+                        disabled={busyId === tk.id}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+                      >
+                        <Megaphone size={13} /> {tk.status === "called" ? t("Call again") : t("Call in")}
+                      </button>
+                      {tk.status === "called" && (
+                        <button
+                          onClick={() => markDone(tk)}
+                          disabled={busyId === tk.id}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-white disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          <Check size={13} /> {t("Done")}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

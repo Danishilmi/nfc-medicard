@@ -23,6 +23,7 @@ const ACTION_LABELS = {
   "lab_result.create": "Added lab result",
   "radiology.create": "Uploaded imaging record",
   "queue.checkin": "Checked in at registration desk",
+  "queue.call": "Called in from the queue",
   "medication.add": "Added medication",
   "medication.discontinue": "Marked medication as stopped",
 };
@@ -38,6 +39,7 @@ const ACTION_ICONS = {
   "lab_result.create": FlaskConical,
   "radiology.create": ScanLine,
   "queue.checkin": DoorOpen,
+  "queue.call": DoorOpen,
   "medication.add": Pill,
   "medication.discontinue": Pill,
 };

@@ -1,6 +1,6 @@
 import {
   MessageCircle, CalendarCheck, AlarmClock, FlaskConical, ScanLine, Pill, ShieldAlert, BedDouble, LogOut,
-  Ticket, Share2, CalendarDays, TriangleAlert, UserPlus, CreditCard, Bell,
+  Ticket, Share2, CalendarDays, TriangleAlert, UserPlus, CreditCard, Bell, DoorOpen, Hourglass,
 } from "lucide-react";
 import { t, dateLocale } from "../i18n/index.js";
 import { formatAppointmentTime } from "./appointmentTime.js";
@@ -55,6 +55,10 @@ export function describeNotification(n) {
       return { icon: BedDouble, tone: "info", title: t("You have been admitted"), body: [d.ward, d.by].filter(Boolean).join(" · ") };
     case "admission.discharged":
       return { icon: LogOut, tone: "info", title: t("You have been discharged"), body: d.ward || t("Get well soon.") };
+    case "queue.called":
+      return { icon: DoorOpen, tone: "alert", title: t("It's your turn!"), body: t("Please go to {room} now · Queue number {number}", { room: d.room, number: d.number }) };
+    case "queue.next":
+      return { icon: Hourglass, tone: "warn", title: t("You're next"), body: t("Queue number {number} · {room}. Please get ready.", { number: d.number, room: d.room }) };
     case "queue.checkin":
       return { icon: Ticket, tone: "info", title: t("Checked in"), body: t("Queue number {number} · {room}", { number: d.number, room: d.room }) };
     case "referral.received":

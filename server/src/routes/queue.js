@@ -14,6 +14,9 @@ function toJson(row) {
     number: row.number,
     room: row.room,
     checkedInBy: row.checked_in_by,
+    status: row.status || "waiting",
+    calledAt: row.called_at,
+    calledBy: row.called_by,
     createdAt: row.created_at,
   };
 }
@@ -62,8 +65,8 @@ router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
   res.status(201).json(toJson(data));
 });
 
-// Today's queue, newest first — the registration desk's own running list.
-router.get("/", requireAuth, requireRole("admin"), async (_req, res) => {
+// Today's queue, newest first — the registration desk's running list (doctors see it too).
+router.get("/", requireAuth, requireRole("admin", "doctor"), async (_req, res) => {
   const { data, error } = await supabase
     .from("queue_tickets")
     .select("*")
@@ -86,6 +89,55 @@ router.get("/mine", requireAuth, requireRole("patient"), async (req, res) => {
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data ? toJson(data) : null);
+});
+
+// Call a patient in: their ticket becomes "called" and they get a "your
+// turn" notification (pop-up, sound and vibration in the app). The next
+// person waiting for the same room is told they're next.
+router.patch("/:id/call", requireAuth, requireRole("admin", "doctor"), async (req, res) => {
+  const { data: ticket } = await supabase.from("queue_tickets").select("*").eq("id", req.params.id).maybeSingle();
+  if (!ticket) return res.status(404).json({ error: "Queue ticket not found" });
+  if (ticket.status === "done") return res.status(400).json({ error: "This patient has already been seen." });
+
+  const { data, error } = await supabase
+    .from("queue_tickets")
+    .update({ status: "called", called_at: new Date().toISOString(), called_by: req.user.name || req.user.email })
+    .eq("id", ticket.id)
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+
+  await logAudit(req.user, "queue.call", "patient", ticket.patient_id, { number: ticket.number, room: ticket.room, name: ticket.patient_name });
+  // a fresh notification every call, so "call again" alerts the patient again
+  await notify(ticket.patient_id, "queue.called", { number: ticket.number, room: ticket.room }, "/patient");
+
+  const { data: next } = await supabase
+    .from("queue_tickets")
+    .select("*")
+    .eq("room", ticket.room)
+    .eq("status", "waiting")
+    .gte("created_at", startOfToday())
+    .gt("number", ticket.number)
+    .order("number", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (next) {
+    await notify(next.patient_id, "queue.next", { number: next.number, room: next.room }, "/patient", `queue-next:${next.id}`);
+  }
+  res.json(toJson(data));
+});
+
+// Mark a patient as seen, which takes them off the waiting list.
+router.patch("/:id/done", requireAuth, requireRole("admin", "doctor"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("queue_tickets")
+    .update({ status: "done" })
+    .eq("id", req.params.id)
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: "Queue ticket not found" });
+  res.json(toJson(data));
 });
 
 export default router;

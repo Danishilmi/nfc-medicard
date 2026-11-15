@@ -15,6 +15,27 @@ const TONES = {
   alert: "bg-red-50 text-red-600 dark:bg-red-950/60 dark:text-red-300",
 };
 
+// A short two-note chime, made with Web Audio so no sound file is needed.
+// Browsers only allow sound after the person has tapped the page once.
+function chime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [[880, 0], [1175, 0.18]].forEach(([freq, at]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.45);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + at);
+      osc.stop(ctx.currentTime + at + 0.5);
+    });
+  } catch {
+    // no sound available: the pop-up still shows
+  }
+}
+
 // Browser pop-ups (outside the page) are only possible on the website, and
 // only after the person has allowed them once.
 export function canAskForPopups() {
@@ -49,7 +70,13 @@ export function NotificationsProvider({ children }) {
     (fresh) => {
       setPopups((list) => [...fresh.slice(0, 3), ...list].slice(0, 3));
       fresh.slice(0, 3).forEach((n) => {
-        setTimeout(() => dismiss(n.id), 7000);
+        if (n.type === "queue.called") {
+          // "your turn" stays until closed, with a chime and a buzz, so it isn't missed in a waiting room
+          chime();
+          navigator.vibrate?.([300, 150, 300]);
+        } else {
+          setTimeout(() => dismiss(n.id), 7000);
+        }
         if ("Notification" in window && Notification.permission === "granted" && document.visibilityState === "hidden") {
           const d = describeNotification(n);
           const sys = new Notification(d.title, { body: d.body, icon: logo, tag: n.id });
@@ -105,7 +132,9 @@ export function NotificationsProvider({ children }) {
           return (
             <div
               key={n.id}
-              className="pointer-events-auto flex w-full max-w-sm animate-fade-in items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl shadow-slate-900/15 dark:border-slate-700 dark:bg-slate-800"
+              className={`pointer-events-auto flex w-full max-w-sm animate-fade-in items-start gap-3 rounded-2xl border bg-white p-3 shadow-xl shadow-slate-900/15 dark:bg-slate-800 ${
+                n.type === "queue.called" ? "border-2 border-red-400 dark:border-red-500" : "border-slate-200 dark:border-slate-700"
+              }`}
             >
               <button type="button" onClick={() => open(n)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
                 <span className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full ${TONES[d.tone]}`}>

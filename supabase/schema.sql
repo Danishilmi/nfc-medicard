@@ -269,6 +269,9 @@ create table if not exists queue_tickets (
   number int not null,
   room text not null,
   checked_in_by text,
+  status text not null default 'waiting' check (status in ('waiting', 'called', 'done')),
+  called_at timestamptz,
+  called_by text,
   created_at timestamptz not null default now()
 );
 

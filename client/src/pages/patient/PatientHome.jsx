@@ -40,7 +40,11 @@ export default function PatientHome() {
   useEffect(() => {
     if (!profile?.uid) return;
     api.get(`/patients/${profile.uid}/vitals`).then((res) => setVitals(res.data.reverse()));
-    api.get("/queue/mine").then((res) => setTicket(res.data));
+    // the ticket changes when staff call the patient in, so keep it fresh
+    const loadTicket = () => api.get("/queue/mine").then((res) => setTicket(res.data)).catch(() => {});
+    loadTicket();
+    const interval = setInterval(loadTicket, 15000);
+    return () => clearInterval(interval);
   }, [profile?.uid]);
 
   const avgHeartRate = vitals.length
@@ -54,14 +58,25 @@ export default function PatientHome() {
         <p className="text-sm text-slate-500 dark:text-slate-400">{t("Here's your health overview.")}</p>
       </div>
 
-      {ticket && (
+      {ticket && ticket.status === "called" && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border-2 border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/40">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-red-600 dark:text-red-300">{t("It's your turn!")}</p>
+            <p className="mt-0.5 flex items-center gap-1.5 text-base font-semibold text-slate-800 dark:text-slate-100">
+              <DoorOpen size={17} /> {t("Please go to {room} now", { room: ticket.room })}
+            </p>
+          </div>
+          <p className="text-3xl font-bold text-red-600 dark:text-red-300">#{ticket.number}</p>
+        </div>
+      )}
+      {ticket && ticket.status !== "called" && ticket.status !== "done" && (
         <div className="flex items-center justify-between rounded-xl border-2 border-brand-200 bg-brand-50 p-4 dark:border-brand-800 dark:bg-brand-900/40">
           <div>
             <p className="text-xs font-bold uppercase tracking-wide text-brand-600 dark:text-brand-300">
               {t("You're checked in")}
             </p>
             <p className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200">
-              <DoorOpen size={15} /> {t("Please proceed to")} {ticket.room}
+              <DoorOpen size={15} /> {t("Please wait for {room}. We'll notify you when it's your turn.", { room: ticket.room })}
             </p>
           </div>
           <p className="text-3xl font-bold text-brand-700 dark:text-brand-300">#{ticket.number}</p>

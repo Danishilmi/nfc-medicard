@@ -97,6 +97,7 @@ const db = {
     { id: "vital-1", patient_id: "patient-1", heart_rate: 78, note: "Resting, ward round", recorded_at: "2026-06-02T04:00:00.000Z" },
   ],
   audit_log: [],
+  queue_tickets: [],
   notifications: [
     { id: "ntf-1", user_id: "patient-1", type: "card.scanned", data: { by: "Dr. Sarah Jenkins", hospital: "Hospital Kuala Lumpur (HKL)", method: "nfc" }, link: "/patient/profile", ref: null, read: false, created_at: "2026-10-28T01:24:00.000Z" },
     { id: "ntf-2", user_id: "patient-1", type: "lab.new", data: { test: "HbA1c & Fasting Plasma Glucose", flagged: true }, link: "/patient/labs", ref: null, read: false, created_at: "2026-10-28T04:00:00.000Z" },
@@ -410,6 +411,47 @@ app.post("/api/nfc/register", requireAuth, requireRole("admin"), (req, res) => {
   db.patients.push(row);
   logAudit(req.user, "nfc.register", "patient", id, { cardUid, name });
   res.status(201).json(toPatientJson(row));
+});
+
+// ---- registration desk queue ------------------------------------------------
+const startOfTodayIso = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
+const toTicketJson = (r) => ({ id: r.id, patientId: r.patient_id, patientName: r.patient_name, number: r.number, room: r.room,
+  checkedInBy: r.checked_in_by, status: r.status, calledAt: r.called_at, calledBy: r.called_by, createdAt: r.created_at });
+const todaysTickets = () => db.queue_tickets.filter((q) => q.created_at >= startOfTodayIso());
+
+app.post("/api/queue", requireAuth, requireRole("admin"), (req, res) => {
+  const { patientId, room } = req.body;
+  if (!patientId || !room) return res.status(400).json({ error: "patientId and room are required" });
+  const p = db.patients.find((x) => x.id === patientId);
+  if (!p) return res.status(404).json({ error: "Patient not found" });
+  const row = { id: uid("q"), patient_id: p.id, patient_name: p.name, number: todaysTickets().length + 1, room,
+    checked_in_by: req.user.name || req.user.email, status: "waiting", called_at: null, called_by: null, created_at: now() };
+  db.queue_tickets.unshift(row);
+  logAudit(req.user, "queue.checkin", "patient", p.id, { number: row.number, room, name: p.name });
+  notify(p.id, "queue.checkin", { number: row.number, room }, "/patient");
+  res.status(201).json(toTicketJson(row));
+});
+app.get("/api/queue", requireAuth, requireRole("admin", "doctor"), (_req, res) => res.json(todaysTickets().map(toTicketJson)));
+app.get("/api/queue/mine", requireAuth, requireRole("patient"), (req, res) => {
+  const mine = todaysTickets().find((q) => q.patient_id === req.user.uid);
+  res.json(mine ? toTicketJson(mine) : null);
+});
+app.patch("/api/queue/:id/call", requireAuth, requireRole("admin", "doctor"), (req, res) => {
+  const q = db.queue_tickets.find((x) => x.id === req.params.id);
+  if (!q) return res.status(404).json({ error: "Queue ticket not found" });
+  if (q.status === "done") return res.status(400).json({ error: "This patient has already been seen." });
+  Object.assign(q, { status: "called", called_at: now(), called_by: req.user.name || req.user.email });
+  logAudit(req.user, "queue.call", "patient", q.patient_id, { number: q.number, room: q.room, name: q.patient_name });
+  notify(q.patient_id, "queue.called", { number: q.number, room: q.room }, "/patient");
+  const next = todaysTickets().filter((x) => x.room === q.room && x.status === "waiting" && x.number > q.number).sort((a, b) => a.number - b.number)[0];
+  if (next) notify(next.patient_id, "queue.next", { number: next.number, room: next.room }, "/patient", `queue-next:${next.id}`);
+  res.json(toTicketJson(q));
+});
+app.patch("/api/queue/:id/done", requireAuth, requireRole("admin", "doctor"), (req, res) => {
+  const q = db.queue_tickets.find((x) => x.id === req.params.id);
+  if (!q) return res.status(404).json({ error: "Queue ticket not found" });
+  q.status = "done";
+  res.json(toTicketJson(q));
 });
 
 // ---- notifications (the bell) ----------------------------------------------
