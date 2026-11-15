@@ -10,9 +10,8 @@ vi.mock("../src/lib/supabase.js", () => ({ supabase: mockSupabase }));
 const sendEachForMulticast = vi.fn(async ({ tokens }) => ({
   responses: tokens.map((tk) => (tk === "dead-token" ? { success: false, error: { code: "messaging/registration-token-not-registered" } } : { success: true })),
 }));
-vi.mock("firebase-admin", () => ({
-  default: { initializeApp: vi.fn(() => ({})), credential: { cert: vi.fn(() => ({})) }, messaging: vi.fn(() => ({ sendEachForMulticast })) },
-}));
+vi.mock("firebase-admin/app", () => ({ initializeApp: vi.fn(() => ({})), cert: vi.fn(() => ({})) }));
+vi.mock("firebase-admin/messaging", () => ({ getMessaging: vi.fn(() => ({ sendEachForMulticast })) }));
 
 let currentUser = { uid: "p1", role: "patient", name: "Ahmad Faiz", email: "patient@medicard.dev" };
 vi.mock("../src/middleware/auth.js", async () => {

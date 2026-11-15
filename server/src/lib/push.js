@@ -1,4 +1,5 @@
-import admin from "firebase-admin";
+import { initializeApp, cert } from "firebase-admin/app";
+import { getMessaging as firebaseMessaging } from "firebase-admin/messaging";
 import { supabase } from "./supabase.js";
 
 // Phone push notifications through Firebase Cloud Messaging, so the most
@@ -13,8 +14,9 @@ function getMessaging() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!raw) return (messaging = null);
   try {
-    const app = admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) }, "medicard-push");
-    messaging = admin.messaging(app);
+    const app = initializeApp({ credential: cert(JSON.parse(raw)) }, "medicard-push");
+    messaging = firebaseMessaging(app);
+    console.log("Push notifications on (Firebase project", JSON.parse(raw).project_id + ")");
   } catch (err) {
     console.error("Push notifications disabled:", err.message);
     messaging = null;
