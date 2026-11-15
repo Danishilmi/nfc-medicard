@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, BellRing, CheckCheck } from "lucide-react";
 import api from "../lib/api.js";
-import { useNotifications } from "../context/NotificationsContext.jsx";
+import { useNotifications, canAskForPopups } from "../context/NotificationsContext.jsx";
 import { describeNotification, timeAgo } from "../lib/notificationText.js";
 import { t } from "../i18n/index.js";
 
@@ -20,6 +20,7 @@ export default function NotificationBell({ variant = "side", align = "start", cl
   const { count, refresh } = useNotifications();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(null);
+  const [askPopups, setAskPopups] = useState(canAskForPopups);
   const rootRef = useRef(null);
 
   const load = () =>
@@ -138,6 +139,15 @@ export default function NotificationBell({ variant = "side", align = "start", cl
             );
           })}
         </div>
+        {askPopups && (
+          <button
+            type="button"
+            onClick={() => Notification.requestPermission().finally(() => setAskPopups(canAskForPopups()))}
+            className="flex items-center justify-center gap-1.5 border-t border-slate-100 px-4 py-2.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:border-slate-700 dark:text-brand-300 dark:hover:bg-slate-700/60"
+          >
+            <BellRing size={14} /> {t("Turn on pop-up alerts on this device")}
+          </button>
+        )}
       </div>
     </div>
   );

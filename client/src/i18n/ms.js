@@ -288,6 +288,8 @@ export default {
   "just now": "baru sahaja",
   "{n} min ago": "{n} minit lalu",
   "{n} h ago": "{n} jam lalu",
+  "Turn on pop-up alerts on this device": "Hidupkan makluman pop-timbul pada peranti ini",
+  "Close": "Tutup",
   "Messages": "Mesej",
   "Messages from your care team will show up here.": "Mesej daripada pasukan penjagaan anda akan dipaparkan di sini.",
   "Monthly": "Bulanan",

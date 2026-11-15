@@ -288,6 +288,8 @@ export default {
   "just now": "இப்போதுதான்",
   "{n} min ago": "{n} நிமிடம் முன்",
   "{n} h ago": "{n} மணி நேரம் முன்",
+  "Turn on pop-up alerts on this device": "இந்தச் சாதனத்தில் பாப்-அப் அறிவிப்புகளை இயக்கு",
+  "Close": "மூடு",
   "Messages": "செய்திகள்",
   "Messages from your care team will show up here.": "உங்கள் பராமரிப்புக் குழுவின் செய்திகள் இங்கே தோன்றும்.",
   "Monthly": "மாதந்தோறும்",

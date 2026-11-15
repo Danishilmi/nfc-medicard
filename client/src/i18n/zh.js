@@ -288,6 +288,8 @@ export default {
   "just now": "刚刚",
   "{n} min ago": "{n} 分钟前",
   "{n} h ago": "{n} 小时前",
+  "Turn on pop-up alerts on this device": "在此设备上开启弹出提醒",
+  "Close": "关闭",
   "Messages": "信息",
   "Messages from your care team will show up here.": "医护团队的信息将显示在这里。",
   "Monthly": "每月",
