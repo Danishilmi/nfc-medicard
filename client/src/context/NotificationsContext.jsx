@@ -6,6 +6,8 @@ import api from "../lib/api.js";
 import { describeNotification } from "../lib/notificationText.js";
 import { t } from "../i18n/index.js";
 import logo from "../assets/logo.png";
+import { useLanguage } from "../i18n/LanguageContext.jsx";
+import { startPush } from "../lib/push.js";
 
 const NotificationsContext = createContext(null);
 
@@ -47,6 +49,7 @@ export function canAskForPopups() {
 // notification when the page is in the background and that is allowed.
 export function NotificationsProvider({ children }) {
   const { profile } = useAuth();
+  const { lang } = useLanguage();
   const navigate = useNavigate();
   const [count, setCount] = useState(0);
   const [popups, setPopups] = useState([]);
@@ -121,6 +124,11 @@ export function NotificationsProvider({ children }) {
     const interval = setInterval(refresh, 15000);
     return () => clearInterval(interval);
   }, [profile]);
+
+  // phone push (Android app): register after login, again when the language changes
+  useEffect(() => {
+    if (profile) startPush({ language: lang, openLink: (link) => navigate(link) });
+  }, [profile, lang]);
 
   return (
     <NotificationsContext.Provider value={{ count, refresh }}>

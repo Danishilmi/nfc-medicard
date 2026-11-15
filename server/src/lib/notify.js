@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { malaysiaNow, addDays } from "./time.js";
+import { sendPush, PUSHED_TYPES } from "./push.js";
 
 // In-app notifications (the bell). Each row belongs to one user and stores
 // what happened as `type` + `data`; the app turns that into text in the
@@ -13,10 +14,13 @@ export async function notify(userIds, type, data = {}, link = null, ref = null) 
     const ids = [...new Set([].concat(userIds).filter(Boolean))];
     if (!ids.length) return;
     const rows = ids.map((id) => ({ user_id: id, type, data, link, ref }));
-    const { error } = ref
-      ? await supabase.from("notifications").upsert(rows, { onConflict: "user_id,ref", ignoreDuplicates: true })
-      : await supabase.from("notifications").insert(rows);
-    if (error) console.error("Failed to create notification:", error.message);
+    const { data: created, error } = ref
+      ? await supabase.from("notifications").upsert(rows, { onConflict: "user_id,ref", ignoreDuplicates: true }).select("user_id")
+      : await supabase.from("notifications").insert(rows).select("user_id");
+    if (error) return console.error("Failed to create notification:", error.message);
+    // also to their phones (only rows actually created, so a reminder is never pushed twice)
+    const to = (created || []).map((r) => r.user_id);
+    if (to.length && PUSHED_TYPES.has(type)) await sendPush(to, type, data, link);
   } catch (err) {
     console.error("Failed to create notification:", err.message);
   }

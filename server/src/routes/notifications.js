@@ -52,4 +52,26 @@ router.post("/read", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// The app registers its phone for push after login (one row per phone; a
+// phone that someone else logged in on before is moved to this user).
+router.post("/devices", requireAuth, async (req, res) => {
+  const { token, platform, lang } = req.body || {};
+  if (!token || typeof token !== "string") return res.status(400).json({ error: "token is required" });
+  const { error } = await supabase.from("device_tokens").upsert(
+    { user_id: req.user.uid, token, platform: platform || "android", lang: ["en", "ms", "zh", "ta"].includes(lang) ? lang : "en", updated_at: new Date().toISOString() },
+    { onConflict: "token" }
+  );
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// On logout: stop pushing to this phone.
+router.post("/devices/remove", requireAuth, async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ error: "token is required" });
+  const { error } = await supabase.from("device_tokens").delete().eq("token", token).eq("user_id", req.user.uid);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 export default router;
