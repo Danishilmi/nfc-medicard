@@ -111,7 +111,10 @@ function NfcStep({ registeredUid, onDone }) {
     try {
       const readUid = await scanOnce({ signal: controller.signal });
       if (normalizeUid(readUid) !== normalizeUid(registeredUid)) {
-        setError(t("This card isn't the one registered to your account. Tap your own MediCard."));
+        setError(
+          `${t("This card isn't the one registered to your account. Tap your own MediCard.")} ` +
+            `(${t("Tapped card")}: ${normalizeUid(readUid)} · ${t("your account")}: ${normalizeUid(registeredUid)})`
+        );
         return;
       }
       setSuccess(true);

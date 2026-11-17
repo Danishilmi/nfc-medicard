@@ -56,7 +56,7 @@ const db = {
       allergies: ["Penicillin", "Peanuts"], chronic_illnesses: ["Type 2 Diabetes"],
       height: 172, weight: 68, phone: "012-3456789",
       emergency_contact_name: "Rahman Bin Ismail", emergency_contact_phone: "013-9876543",
-      card_uid: "04A3B2C1", avatar_url: null, created_at: "2026-06-01T02:00:00.000Z",
+      card_uid: "0443FADB3D0289", avatar_url: null, created_at: "2026-06-01T02:00:00.000Z",
     },
     {
       id: "patient-2", name: "Nur Aisyah Binti Kamal", email: "patient2@medicard.dev",
@@ -229,7 +229,7 @@ function loadLocalUsers() {
   const file = path.join(__dirname, "offline-users.local.json");
   let entries = [];
   try {
-    entries = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
+    entries = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
   } catch (err) {
     if (err.code !== "ENOENT") console.warn(`Couldn't read ${file}: ${err.message}`);
     return [];
@@ -777,6 +777,6 @@ app.listen(PORT, () => {
   console.log(`  Admin:    admin@medicard.dev`);
   console.log(`  Doctor:   doctor@medicard.dev   (Dr. Sarah Jenkins - Cardiology)`);
   console.log(`  Doctor:   doctor2@medicard.dev  (Dr. Robert Chan - Endocrinology)`);
-  console.log(`  Patient:  patient@medicard.dev  (card UID: 04A3B2C1)`);
+  console.log(`  Patient:  patient@medicard.dev  (card UID: 0443FADB3D0289)`);
   console.log(`  Patient:  patient2@medicard.dev (card UID: 07D8E9F0)\n`);
 });
