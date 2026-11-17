@@ -2,18 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Check, ImageUp, Nfc, RotateCcw, ShieldCheck, Sparkles, X } from "lucide-react";
 import { isNfcSupported, scanOnce } from "../lib/nfc.js";
 import { CARD_RATIO, defaultCorners, flattenCard, normalizeUid, snapshot } from "../lib/digitalCard.js";
+import { adviseShot, detectCard, isSteady, loadOpenCv } from "../lib/cardDetect.js";
 import { t } from "../i18n/index.js";
 
 // Full-screen flow that copies the patient's physical MediCard onto the phone:
-//   1. read the card's UID over NFC and check it is this patient's registered card,
-//   2. open the camera and photograph the front of the (portrait) card,
-//   3. fine-tune the card's four corners; the photo is then flattened into a straight 2D card,
-//   4. review the 2D card and save it as the digital card.
+//   1. NFC: scanning starts straight away; once the card is read and matches the patient's
+//      registered card, the camera opens by itself,
+//   2. camera: the card is found in the live picture, the person gets tips (closer, flatter,
+//      more light, hold steady) and the photo is taken automatically once it's lined up,
+//   3. the photo is flattened into a straight portrait 2D card, which the person reviews and saves.
+// If the card can't be found in a photo, a fallback step lets the person mark its corners.
 export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
   const [step, setStep] = useState("nfc");
   const [uid, setUid] = useState(null);
   const [verified, setVerified] = useState(false);
-  const [photo, setPhoto] = useState(null); // { canvas, corners }
+  const [photo, setPhoto] = useState(null); // { canvas, corners } for the manual fallback
   const [image, setImage] = useState(null);
 
   return (
@@ -44,7 +47,11 @@ export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
         )}
         {step === "camera" && (
           <CameraStep
-            onCapture={(canvas, corners) => {
+            onCard={(dataUrl) => {
+              setImage(dataUrl);
+              setStep("review");
+            }}
+            onNeedsCorners={(canvas, corners) => {
               setPhoto({ canvas, corners });
               setStep("adjust");
             }}
@@ -65,7 +72,7 @@ export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
             image={image}
             uid={uid}
             verified={verified}
-            onAdjust={() => setStep("adjust")}
+            onRetake={() => setStep("camera")}
             onSave={() => onSave({ uid, verified, image, copiedAt: new Date().toISOString() })}
           />
         )}
@@ -75,8 +82,8 @@ export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
 }
 
 function StepDots({ step }) {
-  const steps = ["nfc", "camera", "adjust", "review"];
-  const at = steps.indexOf(step);
+  const steps = ["nfc", "camera", "review"];
+  const at = step === "adjust" ? 1 : steps.indexOf(step);
   return (
     <div className="flex gap-1.5" aria-hidden="true">
       {steps.map((s, i) => (
@@ -89,12 +96,14 @@ function StepDots({ step }) {
 function NfcStep({ registeredUid, onDone }) {
   const supported = isNfcSupported();
   const [scanning, setScanning] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
-  useEffect(() => () => abortRef.current?.abort(), []);
-
-  const startScan = async () => {
+  const startScan = useCallback(async () => {
+    abortRef.current?.abort();
     setError(null);
     setScanning(true);
     const controller = new AbortController();
@@ -105,67 +114,95 @@ function NfcStep({ registeredUid, onDone }) {
         setError(t("This card isn't the one registered to your account. Tap your own MediCard."));
         return;
       }
-      onDone(normalizeUid(readUid), true);
+      setSuccess(true);
+      // Show the tick for a moment, then go straight to the camera.
+      setTimeout(() => onDoneRef.current(normalizeUid(readUid), true), 700);
     } catch (err) {
       if (!controller.signal.aborted) setError(err?.message || t("Failed to read the NFC card. Try tapping it again."));
     } finally {
       setScanning(false);
     }
-  };
+  }, [registeredUid]);
+
+  // Start listening for the card as soon as this step opens (the "Copy my card" tap counts as
+  // the user gesture Chrome needs for the NFC permission prompt).
+  useEffect(() => {
+    if (supported) startScan();
+    return () => abortRef.current?.abort();
+  }, [supported, startScan]);
 
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
-      <div className={`flex h-28 w-28 items-center justify-center rounded-full bg-sky-500/15 ${scanning ? "animate-pulse" : ""}`}>
-        <Nfc size={56} className="text-sky-400" />
+      <div
+        className={`flex h-28 w-28 items-center justify-center rounded-full ${
+          success ? "bg-emerald-500/20" : "bg-sky-500/15"
+        } ${scanning ? "animate-pulse" : ""}`}
+      >
+        {success ? <Check size={56} className="text-emerald-400" /> : <Nfc size={56} className="text-sky-400" />}
       </div>
       <div>
-        <h2 className="text-lg font-bold">{t("Step 1: Tap your card")}</h2>
+        <h2 className="text-lg font-bold">{success ? t("Card verified") : t("Step 1: Tap your card")}</h2>
         <p className="mt-1 text-sm text-slate-300">
-          {supported
-            ? t("Turn on NFC, then hold your physical MediCard against the back of your phone.")
-            : t("This browser can't read NFC cards. Use Chrome on an Android phone with NFC turned on, or continue with your registered card number.")}
+          {success
+            ? t("Opening the camera…")
+            : supported
+              ? t("Turn on NFC, then hold your physical MediCard against the back of your phone.")
+              : t("This browser can't read NFC cards. Use Chrome on an Android phone with NFC turned on, or continue with your registered card number.")}
         </p>
       </div>
 
       {error && <p className="w-full rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-300">{error}</p>}
 
-      {supported && (
+      {supported && !scanning && !success && (
         <button
           type="button"
           onClick={startScan}
-          disabled={scanning}
-          className="w-full rounded-xl bg-sky-500 px-4 py-3 font-semibold text-white hover:bg-sky-400 disabled:opacity-70"
+          className="w-full rounded-xl bg-sky-500 px-4 py-3 font-semibold text-white hover:bg-sky-400"
         >
-          {scanning ? t("Waiting for your card…") : t("Start NFC scan")}
+          {t("Scan again")}
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => {
-          abortRef.current?.abort();
-          onDone(normalizeUid(registeredUid), false);
-        }}
-        className="text-sm font-medium text-slate-300 underline-offset-2 hover:underline"
-      >
-        {t("Continue without NFC")}
-      </button>
+      {scanning && <p className="text-sm text-sky-300">{t("Waiting for your card…")}</p>}
+      {!success && (
+        <button
+          type="button"
+          onClick={() => {
+            abortRef.current?.abort();
+            onDone(normalizeUid(registeredUid), false);
+          }}
+          className="text-sm font-medium text-slate-400 underline-offset-2 hover:underline"
+        >
+          {t("Continue without NFC")}
+        </button>
+      )}
     </div>
   );
 }
 
-function CameraStep({ onCapture }) {
+const STEADY_FRAMES = 6; // good, still frames in a row before the photo is taken (~1 s)
+const DETECT_EVERY_MS = 160;
+
+function CameraStep({ onCard, onNeedsCorners }) {
   const videoRef = useRef(null);
   const frameRef = useRef(null);
   const fileRef = useRef(null);
   const streamRef = useRef(null);
+  const cvRef = useRef(null);
+  const capturedRef = useRef(false);
   const [status, setStatus] = useState("starting"); // starting | live | failed
+  const [scanner, setScanner] = useState("loading"); // loading | ready | unavailable
   const [error, setError] = useState(null);
+  const [detection, setDetection] = useState(null);
+  const [advice, setAdvice] = useState(null);
+  const [steadyCount, setSteadyCount] = useState(0);
+  const [processing, setProcessing] = useState(false);
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   }, []);
 
+  // Open the camera.
   useEffect(() => {
     let cancelled = false;
     async function start() {
@@ -206,31 +243,110 @@ function CameraStep({ onCapture }) {
     };
   }, [stopStream]);
 
-  // Keeps the whole video frame, and maps the on-screen card guide back to the video's own
-  // pixels (the video is drawn with object-cover, so it is scaled and centred in its box) as
-  // the starting corners for the adjust step.
-  const capture = () => {
+  // Load the card detector alongside the camera.
+  useEffect(() => {
+    let cancelled = false;
+    loadOpenCv()
+      .then(({ cv }) => {
+        if (cancelled) return;
+        cvRef.current = cv;
+        setScanner("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setScanner("unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Turns a full-resolution photo into the 2D card, or hands it to the manual corner step when
+  // the card can't be found in it.
+  const finishPhoto = useCallback(
+    (canvas, corners) => {
+      setProcessing(true);
+      setTimeout(() => {
+        let found = corners;
+        if (!found && cvRef.current) {
+          try {
+            found = detectCard(cvRef.current, canvas).corners;
+          } catch {
+            found = null;
+          }
+        }
+        if (found) {
+          onCard(flattenCard(canvas, found));
+        } else {
+          onNeedsCorners(canvas, defaultCorners(canvas.width, canvas.height));
+        }
+      }, 30);
+    },
+    [onCard, onNeedsCorners]
+  );
+
+  const captureNow = useCallback(
+    (corners) => {
+      const video = videoRef.current;
+      if (!video?.videoWidth || capturedRef.current) return;
+      capturedRef.current = true;
+      if (navigator.vibrate) navigator.vibrate(60);
+      const canvas = snapshot(video);
+      stopStream();
+      finishPhoto(canvas, corners || null);
+    },
+    [finishPhoto, stopStream]
+  );
+
+  // Watch the live picture: find the card, give a tip, and take the photo once it has been
+  // lined up and still for a moment.
+  useEffect(() => {
+    if (status !== "live" || scanner !== "ready") return;
+    let timer = null;
+    let previous = null;
+    let steady = 0;
+    const tick = () => {
+      const video = videoRef.current;
+      if (!video?.videoWidth || capturedRef.current) return;
+      let d = null;
+      try {
+        d = detectCard(cvRef.current, video, { viewAspect: 3 / 4 });
+      } catch {
+        d = null;
+      }
+      const a = adviseShot(d);
+      if (a.ok && isSteady(d, previous)) steady += 1;
+      else if (!a.ok) steady = 0;
+      previous = d;
+      setDetection(d);
+      setAdvice(a);
+      setSteadyCount(steady);
+      if (steady >= STEADY_FRAMES) {
+        captureNow(d.corners);
+        return;
+      }
+      timer = setTimeout(tick, DETECT_EVERY_MS);
+    };
+    timer = setTimeout(tick, 300);
+    return () => clearTimeout(timer);
+  }, [status, scanner, captureNow]);
+
+  // Without the detector, fall back to the on-screen guide frame as the card's outline.
+  const guideCorners = () => {
     const video = videoRef.current;
     const frame = frameRef.current;
-    if (!video || !frame || !video.videoWidth) return;
+    if (!video || !frame) return null;
     const box = video.getBoundingClientRect();
     const rect = frame.getBoundingClientRect();
     const scale = Math.max(box.width / video.videoWidth, box.height / video.videoHeight);
     const offsetX = (box.width - video.videoWidth * scale) / 2;
     const offsetY = (box.height - video.videoHeight * scale) / 2;
-    const toSource = (px, py) => ({
-      x: (px - box.left - offsetX) / scale,
-      y: (py - box.top - offsetY) / scale,
-    });
-    const corners = [
+    const toSource = (px, py) => ({ x: (px - box.left - offsetX) / scale, y: (py - box.top - offsetY) / scale });
+    return [
       toSource(rect.left, rect.top),
       toSource(rect.right, rect.top),
       toSource(rect.right, rect.bottom),
       toSource(rect.left, rect.bottom),
     ];
-    const canvas = snapshot(video);
-    stopStream();
-    onCapture(canvas, corners);
   };
 
   const pickFile = (event) => {
@@ -238,11 +354,21 @@ function CameraStep({ onCapture }) {
     if (!file) return;
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       const canvas = snapshot(img);
       URL.revokeObjectURL(url);
+      capturedRef.current = true;
       stopStream();
-      onCapture(canvas, defaultCorners(canvas.width, canvas.height));
+      // Wait for the detector if it's still loading, so the photo is flattened automatically.
+      if (!cvRef.current) {
+        setProcessing(true);
+        try {
+          cvRef.current = (await loadOpenCv()).cv;
+        } catch {
+          // carry on without it: the corner step takes over
+        }
+      }
+      finishPhoto(canvas, null);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -251,12 +377,33 @@ function CameraStep({ onCapture }) {
     img.src = url;
   };
 
+  const video = videoRef.current;
+  const good = advice?.ok;
+  const tip =
+    status !== "live"
+      ? null
+      : scanner === "loading"
+        ? t("Preparing the card scanner…")
+        : scanner === "unavailable"
+          ? t("Line your card up with the frame, then tap Take photo.")
+          : t(advice?.tip || "Place your card inside the frame, on a plain darker surface.");
+
+  if (processing) {
+    return (
+      <div className="flex flex-col items-center gap-4 text-center">
+        <Sparkles size={40} className="animate-pulse text-sky-400" />
+        <p className="text-lg font-bold">{t("Creating your 2D card…")}</p>
+        <p className="text-sm text-slate-300">{t("Straightening the photo and cleaning up the colours.")}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
       <div>
         <h2 className="text-lg font-bold">{t("Step 2: Photograph your card")}</h2>
         <p className="mt-1 text-sm text-slate-300">
-          {t("Hold the card upright on a plain surface and fit its front inside the frame.")}
+          {t("Lay the card upright on a plain surface and point your camera at it. The photo is taken for you.")}
         </p>
       </div>
 
@@ -269,9 +416,47 @@ function CameraStep({ onCapture }) {
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div
               ref={frameRef}
-              className="h-[86%] rounded-2xl border-2 border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
+              className={`h-[80%] rounded-2xl border-2 border-dashed ${
+                detection?.corners ? "border-white/30" : "border-white/80"
+              } shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]`}
               style={{ aspectRatio: String(CARD_RATIO) }}
             />
+          </div>
+        )}
+        {status === "live" && video?.videoWidth > 0 && detection?.corners && (
+          // Same coordinate space as the video, scaled the same way as object-cover.
+          <svg
+            className="pointer-events-none absolute inset-0 h-full w-full"
+            viewBox={`0 0 ${video.videoWidth} ${video.videoHeight}`}
+            preserveAspectRatio="xMidYMid slice"
+          >
+            <polygon
+              points={detection.corners.map((p) => `${p.x},${p.y}`).join(" ")}
+              fill={good ? "rgba(16,185,129,0.18)" : "rgba(245,158,11,0.12)"}
+              stroke={good ? "#10b981" : "#f59e0b"}
+              strokeWidth={Math.max(video.videoWidth, video.videoHeight) * 0.006}
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+        {tip && (
+          <div className="absolute inset-x-3 bottom-3">
+            <p
+              className={`rounded-xl px-3 py-2 text-sm font-semibold backdrop-blur ${
+                good ? "bg-emerald-500/85 text-white" : "bg-slate-900/80 text-white"
+              }`}
+              aria-live="polite"
+            >
+              {tip}
+            </p>
+            {good && (
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/20">
+                <div
+                  className="h-full bg-emerald-400 transition-all"
+                  style={{ width: `${Math.min(100, (steadyCount / STEADY_FRAMES) * 100)}%` }}
+                />
+              </div>
+            )}
           </div>
         )}
         {status === "failed" && (
@@ -286,10 +471,10 @@ function CameraStep({ onCapture }) {
       {status === "live" && (
         <button
           type="button"
-          onClick={capture}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-500 px-4 py-3 font-semibold text-white hover:bg-sky-400"
+          onClick={() => captureNow(scanner === "ready" ? detection?.corners : guideCorners())}
+          className="flex items-center gap-1.5 text-sm font-medium text-slate-300 hover:text-white"
         >
-          <Camera size={18} /> {t("Capture card")}
+          <Camera size={16} /> {t("Take photo now")}
         </button>
       )}
       <button
@@ -304,9 +489,8 @@ function CameraStep({ onCapture }) {
   );
 }
 
-// Shows the whole photo with the card's outline; each corner can be dragged onto the real
-// card corner. The SVG uses the photo's own pixel coordinates, so the corners need no
-// conversion before flattening.
+// Fallback only, when the card couldn't be found in the photo: the whole photo with the
+// card's outline, whose corners can be dragged onto the real card corners.
 function AdjustStep({ photo, onRetake, onDone }) {
   const { canvas } = photo;
   const svgRef = useRef(null);
@@ -336,7 +520,6 @@ function AdjustStep({ photo, onRetake, onDone }) {
 
   const makeCard = () => {
     setWorking(true);
-    // Let the "Creating…" label paint before the pixel work blocks the page briefly.
     setTimeout(() => {
       const dataUrl = flattenCard(canvas, corners);
       setWorking(false);
@@ -344,15 +527,12 @@ function AdjustStep({ photo, onRetake, onDone }) {
     }, 30);
   };
 
-  // Keep the edited corners if the person goes back to this step from the review.
-  photo.corners = corners;
-
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
       <div>
-        <h2 className="text-lg font-bold">{t("Step 3: Mark the card's corners")}</h2>
+        <h2 className="text-lg font-bold">{t("We couldn't find the card's edges")}</h2>
         <p className="mt-1 text-sm text-slate-300">
-          {t("Drag each dot onto a corner of your card. We'll straighten it into a flat 2D card.")}
+          {t("Drag each dot onto a corner of your card, or retake the photo on a plain darker surface.")}
         </p>
       </div>
 
@@ -410,18 +590,18 @@ function AdjustStep({ photo, onRetake, onDone }) {
   );
 }
 
-function ReviewStep({ image, uid, verified, onAdjust, onSave }) {
+function ReviewStep({ image, uid, verified, onRetake, onSave }) {
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-5 text-center">
       <div>
-        <h2 className="text-lg font-bold">{t("Step 4: Check your digital card")}</h2>
+        <h2 className="text-lg font-bold">{t("Step 3: Your 2D card")}</h2>
         <p className="mt-1 text-sm text-slate-300">{t("This is how your card will look on your phone.")}</p>
       </div>
       <img
         src={image}
         alt={t("Your digital MediCard")}
-        className="max-h-[55vh] rounded-2xl shadow-2xl ring-1 ring-white/20"
-        style={{ aspectRatio: String(CARD_RATIO) }}
+        className="w-auto max-w-full shrink-0 rounded-2xl shadow-2xl ring-1 ring-white/20"
+        style={{ height: "52vh", aspectRatio: String(CARD_RATIO) }}
       />
       <p className="flex items-center gap-1.5 text-sm text-slate-300">
         {verified ? <ShieldCheck size={16} className="text-emerald-400" /> : <Nfc size={16} />}
@@ -431,10 +611,10 @@ function ReviewStep({ image, uid, verified, onAdjust, onSave }) {
       <div className="flex w-full gap-3">
         <button
           type="button"
-          onClick={onAdjust}
+          onClick={onRetake}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/25 px-4 py-3 font-semibold hover:bg-white/10"
         >
-          <RotateCcw size={16} /> {t("Adjust corners")}
+          <RotateCcw size={16} /> {t("Retake")}
         </button>
         <button
           type="button"
