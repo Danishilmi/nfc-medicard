@@ -5,3 +5,6 @@ build/
 .env
 .env.local
 *.log
+
+# Personal logins for the offline demo server
+server/offline-users.local.json

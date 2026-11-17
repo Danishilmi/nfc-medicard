@@ -15,6 +15,7 @@
 import express from "express";
 import multer from "multer";
 import path from "path";
+import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 
@@ -216,12 +217,57 @@ function canAccessPatient(req, patientId) {
   return req.user.role === "admin" || req.user.role === "doctor" || req.user.uid === patientId;
 }
 
+// ---- Your own local accounts ---------------------------------------------
+// Optional: server/offline-users.local.json (git-ignored, so personal emails and passwords
+// never get committed) adds extra logins to the offline demo, e.g.
+//   [{ "email": "you@example.com", "password": "...", "name": "Your Name",
+//      "role": "patient", "cardUid": "04A1B2C3" }]
+// role is patient (default), doctor or admin. For a patient, cardUid is the UID of your
+// physical NFC card (shown in the doctor/admin scan screens when you tap it); one is made up
+// if left out.
+function loadLocalUsers() {
+  const file = path.join(__dirname, "offline-users.local.json");
+  let entries = [];
+  try {
+    entries = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn(`Couldn't read ${file}: ${err.message}`);
+    return [];
+  }
+  const added = [];
+  for (const [i, u] of entries.entries()) {
+    if (!u?.email || !u?.password) continue;
+    const email = String(u.email).trim().toLowerCase();
+    if (db.profiles.some((p) => p.email === email)) continue;
+    const role = ["doctor", "admin"].includes(u.role) ? u.role : "patient";
+    const id = `local-${role}-${i + 1}`;
+    const name = u.name || email.split("@")[0];
+    db.profiles.push({ id, role, name, email });
+    db.passwords[email] = String(u.password);
+    if (role === "patient") {
+      db.patients.push({
+        id, name, email, ic: u.ic || "", dob: u.dob || null, age: u.age ?? null, gender: u.gender || "",
+        blood_type: u.bloodType || "", allergies: [], chronic_illnesses: [], height: null, weight: null,
+        phone: u.phone || "", emergency_contact_name: "", emergency_contact_phone: "",
+        card_uid: String(u.cardUid || crypto.createHash("sha1").update(email).digest("hex").slice(0, 8)).replace(/[^0-9a-f]/gi, "").toUpperCase(),
+        avatar_url: null, created_at: now(),
+      });
+    } else if (role === "doctor") {
+      db.doctors.push({ id, name, email, department: u.department || "General Medicine", hospital: u.hospital || "Hospital Kuala Lumpur (HKL)", avatar_url: null });
+    }
+    added.push({ email, role });
+  }
+  return added;
+}
+const localUsers = loadLocalUsers();
+
 const app = express();
 app.use(express.json());
 
 // ---- Offline login (replaces Supabase Auth for this build) ----------------
 app.post("/api/offline/login", (req, res) => {
-  const { email, password } = req.body || {};
+  const { password } = req.body || {};
+  const email = String(req.body?.email || "").trim().toLowerCase();
   const user = findUserByEmail(email);
   if (!user || db.passwords[email] !== password) {
     return res.status(401).json({ error: "Invalid email or password." });
@@ -722,6 +768,11 @@ app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(distDir, "index.ht
 app.listen(PORT, () => {
   console.log(`\nMediCard OFFLINE demo server running — no internet required.`);
   console.log(`Open: http://localhost:${PORT}\n`);
+  if (localUsers.length) {
+    console.log(`Your local accounts (from offline-users.local.json):`);
+    for (const u of localUsers) console.log(`  ${u.role.padEnd(8)} ${u.email}`);
+    console.log("");
+  }
   console.log(`Demo logins (password for all: password123):`);
   console.log(`  Admin:    admin@medicard.dev`);
   console.log(`  Doctor:   doctor@medicard.dev   (Dr. Sarah Jenkins - Cardiology)`);
