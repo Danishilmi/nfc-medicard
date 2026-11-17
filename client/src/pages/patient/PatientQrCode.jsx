@@ -122,7 +122,7 @@ export default function PatientQrCode() {
                 <button
                   type="button"
                   onClick={() => setPresenting(true)}
-                  className="block w-full overflow-hidden rounded-2xl shadow-lg ring-1 ring-slate-200 transition hover:scale-[1.01] dark:ring-slate-700"
+                  className="mx-auto block w-full max-w-[240px] overflow-hidden rounded-2xl shadow-lg ring-1 ring-slate-200 transition hover:scale-[1.01] dark:ring-slate-700"
                   aria-label={t("Show card full screen")}
                 >
                   <img
@@ -198,7 +198,7 @@ export default function PatientQrCode() {
 // scan to look the patient up, exactly as when the physical card is tapped.
 function PresentCard({ card, qr, name, onClose }) {
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-5 bg-white p-6 dark:bg-slate-950" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex overflow-y-auto bg-white p-6 dark:bg-slate-950" role="dialog" aria-modal="true">
       <button
         type="button"
         onClick={onClose}
@@ -207,15 +207,17 @@ function PresentCard({ card, qr, name, onClose }) {
       >
         <X size={22} />
       </button>
+      <div className="m-auto flex flex-col items-center gap-4">
       <img
         src={card.image}
         alt={t("Your digital MediCard")}
-        className="w-full max-w-md rounded-2xl shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700"
-        style={{ aspectRatio: String(CARD_RATIO) }}
+        className="w-auto max-w-full shrink-0 rounded-2xl object-cover shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700"
+        style={{ height: "55vh", aspectRatio: String(CARD_RATIO) }}
       />
       <p className="font-semibold text-slate-800 dark:text-slate-100">{name}</p>
-      {qr && <img src={qr} alt={t("Your MediCard QR code")} className="w-56 rounded-xl border border-slate-200 bg-white p-2" />}
+      {qr && <img src={qr} alt={t("Your MediCard QR code")} className="w-36 shrink-0 rounded-xl border border-slate-200 bg-white p-2" />}
       <p className="font-mono text-sm tracking-widest text-slate-500 dark:text-slate-400">{card.uid}</p>
+      </div>
     </div>
   );
 }

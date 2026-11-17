@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, Check, ImageUp, Nfc, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Camera, Check, ImageUp, Nfc, RotateCcw, ShieldCheck, Sparkles, X } from "lucide-react";
 import { isNfcSupported, scanOnce } from "../lib/nfc.js";
-import { CARD_RATIO, centerCropToCard, cropToCard, normalizeUid } from "../lib/digitalCard.js";
+import { CARD_RATIO, defaultCorners, flattenCard, normalizeUid, snapshot } from "../lib/digitalCard.js";
 import { t } from "../i18n/index.js";
 
-// Full-screen, three-step flow that copies the patient's physical MediCard onto the phone:
+// Full-screen flow that copies the patient's physical MediCard onto the phone:
 //   1. read the card's UID over NFC and check it is this patient's registered card,
-//   2. open the camera and photograph the front of the card (cropped to the card's shape),
-//   3. review the result and save it as the digital card.
+//   2. open the camera and photograph the front of the (portrait) card,
+//   3. fine-tune the card's four corners; the photo is then flattened into a straight 2D card,
+//   4. review the 2D card and save it as the digital card.
 export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
   const [step, setStep] = useState("nfc");
   const [uid, setUid] = useState(null);
   const [verified, setVerified] = useState(false);
+  const [photo, setPhoto] = useState(null); // { canvas, corners }
   const [image, setImage] = useState(null);
 
   return (
@@ -42,7 +44,17 @@ export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
         )}
         {step === "camera" && (
           <CameraStep
-            onCapture={(dataUrl) => {
+            onCapture={(canvas, corners) => {
+              setPhoto({ canvas, corners });
+              setStep("adjust");
+            }}
+          />
+        )}
+        {step === "adjust" && photo && (
+          <AdjustStep
+            photo={photo}
+            onRetake={() => setStep("camera")}
+            onDone={(dataUrl) => {
               setImage(dataUrl);
               setStep("review");
             }}
@@ -53,7 +65,7 @@ export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
             image={image}
             uid={uid}
             verified={verified}
-            onRetake={() => setStep("camera")}
+            onAdjust={() => setStep("adjust")}
             onSave={() => onSave({ uid, verified, image, copiedAt: new Date().toISOString() })}
           />
         )}
@@ -63,7 +75,7 @@ export default function CopyCardWizard({ registeredUid, onSave, onClose }) {
 }
 
 function StepDots({ step }) {
-  const steps = ["nfc", "camera", "review"];
+  const steps = ["nfc", "camera", "adjust", "review"];
   const at = steps.indexOf(step);
   return (
     <div className="flex gap-1.5" aria-hidden="true">
@@ -194,8 +206,9 @@ function CameraStep({ onCapture }) {
     };
   }, [stopStream]);
 
-  // Maps the on-screen card frame back to the video's own pixels (the video is drawn with
-  // object-cover, so it is scaled and centred inside its box) and crops that region.
+  // Keeps the whole video frame, and maps the on-screen card guide back to the video's own
+  // pixels (the video is drawn with object-cover, so it is scaled and centred in its box) as
+  // the starting corners for the adjust step.
   const capture = () => {
     const video = videoRef.current;
     const frame = frameRef.current;
@@ -205,11 +218,19 @@ function CameraStep({ onCapture }) {
     const scale = Math.max(box.width / video.videoWidth, box.height / video.videoHeight);
     const offsetX = (box.width - video.videoWidth * scale) / 2;
     const offsetY = (box.height - video.videoHeight * scale) / 2;
-    const sx = (rect.left - box.left - offsetX) / scale;
-    const sy = (rect.top - box.top - offsetY) / scale;
-    const dataUrl = cropToCard(video, sx, sy, rect.width / scale, rect.height / scale);
+    const toSource = (px, py) => ({
+      x: (px - box.left - offsetX) / scale,
+      y: (py - box.top - offsetY) / scale,
+    });
+    const corners = [
+      toSource(rect.left, rect.top),
+      toSource(rect.right, rect.top),
+      toSource(rect.right, rect.bottom),
+      toSource(rect.left, rect.bottom),
+    ];
+    const canvas = snapshot(video);
     stopStream();
-    onCapture(dataUrl);
+    onCapture(canvas, corners);
   };
 
   const pickFile = (event) => {
@@ -218,10 +239,10 @@ function CameraStep({ onCapture }) {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const dataUrl = centerCropToCard(img);
+      const canvas = snapshot(img);
       URL.revokeObjectURL(url);
       stopStream();
-      onCapture(dataUrl);
+      onCapture(canvas, defaultCorners(canvas.width, canvas.height));
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -235,11 +256,11 @@ function CameraStep({ onCapture }) {
       <div>
         <h2 className="text-lg font-bold">{t("Step 2: Photograph your card")}</h2>
         <p className="mt-1 text-sm text-slate-300">
-          {t("Lay the card on a plain surface and fit its front inside the frame.")}
+          {t("Hold the card upright on a plain surface and fit its front inside the frame.")}
         </p>
       </div>
 
-      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black sm:aspect-[4/3]">
+      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-black">
         <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
         {status === "starting" && (
           <p className="absolute inset-0 flex items-center justify-center text-sm text-slate-300">{t("Opening camera…")}</p>
@@ -248,7 +269,7 @@ function CameraStep({ onCapture }) {
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div
               ref={frameRef}
-              className="w-[88%] rounded-2xl border-2 border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
+              className="h-[86%] rounded-2xl border-2 border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
               style={{ aspectRatio: String(CARD_RATIO) }}
             />
           </div>
@@ -283,17 +304,123 @@ function CameraStep({ onCapture }) {
   );
 }
 
-function ReviewStep({ image, uid, verified, onRetake, onSave }) {
+// Shows the whole photo with the card's outline; each corner can be dragged onto the real
+// card corner. The SVG uses the photo's own pixel coordinates, so the corners need no
+// conversion before flattening.
+function AdjustStep({ photo, onRetake, onDone }) {
+  const { canvas } = photo;
+  const svgRef = useRef(null);
+  const [corners, setCorners] = useState(photo.corners);
+  const [dragging, setDragging] = useState(null);
+  const [working, setWorking] = useState(false);
+  const preview = useMemo(() => canvas.toDataURL("image/jpeg", 0.85), [canvas]);
+  const handle = Math.max(canvas.width, canvas.height) * 0.025;
+
+  const toPhoto = (event) => {
+    const svg = svgRef.current;
+    const pt = svg.createSVGPoint();
+    pt.x = event.clientX;
+    pt.y = event.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return {
+      x: Math.max(0, Math.min(canvas.width, p.x)),
+      y: Math.max(0, Math.min(canvas.height, p.y)),
+    };
+  };
+
+  const onPointerMove = (event) => {
+    if (dragging === null) return;
+    const p = toPhoto(event);
+    setCorners((prev) => prev.map((c, i) => (i === dragging ? p : c)));
+  };
+
+  const makeCard = () => {
+    setWorking(true);
+    // Let the "Creating…" label paint before the pixel work blocks the page briefly.
+    setTimeout(() => {
+      const dataUrl = flattenCard(canvas, corners);
+      setWorking(false);
+      onDone(dataUrl);
+    }, 30);
+  };
+
+  // Keep the edited corners if the person goes back to this step from the review.
+  photo.corners = corners;
+
+  return (
+    <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
+      <div>
+        <h2 className="text-lg font-bold">{t("Step 3: Mark the card's corners")}</h2>
+        <p className="mt-1 text-sm text-slate-300">
+          {t("Drag each dot onto a corner of your card. We'll straighten it into a flat 2D card.")}
+        </p>
+      </div>
+
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${canvas.width} ${canvas.height}`}
+        className="max-h-[60vh] w-full touch-none select-none rounded-2xl bg-black"
+        onPointerMove={onPointerMove}
+        onPointerUp={() => setDragging(null)}
+        onPointerLeave={() => setDragging(null)}
+      >
+        <image href={preview} width={canvas.width} height={canvas.height} />
+        <polygon
+          points={corners.map((c) => `${c.x},${c.y}`).join(" ")}
+          fill="rgba(56,189,248,0.15)"
+          stroke="#38bdf8"
+          strokeWidth={handle * 0.25}
+        />
+        {corners.map((c, i) => (
+          <circle
+            key={i}
+            cx={c.x}
+            cy={c.y}
+            r={handle}
+            fill={dragging === i ? "#38bdf8" : "rgba(15,23,42,0.6)"}
+            stroke="#fff"
+            strokeWidth={handle * 0.25}
+            className="cursor-grab"
+            onPointerDown={(event) => {
+              event.currentTarget.ownerSVGElement.setPointerCapture?.(event.pointerId);
+              setDragging(i);
+            }}
+          />
+        ))}
+      </svg>
+
+      <div className="flex w-full gap-3">
+        <button
+          type="button"
+          onClick={onRetake}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/25 px-4 py-3 font-semibold hover:bg-white/10"
+        >
+          <RotateCcw size={16} /> {t("Retake")}
+        </button>
+        <button
+          type="button"
+          onClick={makeCard}
+          disabled={working}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-sky-500 px-4 py-3 font-semibold text-white hover:bg-sky-400 disabled:opacity-70"
+        >
+          <Sparkles size={16} /> {working ? t("Creating…") : t("Create 2D card")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewStep({ image, uid, verified, onAdjust, onSave }) {
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-5 text-center">
       <div>
-        <h2 className="text-lg font-bold">{t("Step 3: Check your digital card")}</h2>
-        <p className="mt-1 text-sm text-slate-300">{t("Make sure the whole card is visible and sharp.")}</p>
+        <h2 className="text-lg font-bold">{t("Step 4: Check your digital card")}</h2>
+        <p className="mt-1 text-sm text-slate-300">{t("This is how your card will look on your phone.")}</p>
       </div>
       <img
         src={image}
-        alt={t("Photo of your MediCard")}
-        className="w-full rounded-2xl shadow-2xl ring-1 ring-white/20"
+        alt={t("Your digital MediCard")}
+        className="max-h-[55vh] rounded-2xl shadow-2xl ring-1 ring-white/20"
         style={{ aspectRatio: String(CARD_RATIO) }}
       />
       <p className="flex items-center gap-1.5 text-sm text-slate-300">
@@ -304,10 +431,10 @@ function ReviewStep({ image, uid, verified, onRetake, onSave }) {
       <div className="flex w-full gap-3">
         <button
           type="button"
-          onClick={onRetake}
+          onClick={onAdjust}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/25 px-4 py-3 font-semibold hover:bg-white/10"
         >
-          <RotateCcw size={16} /> {t("Retake")}
+          <RotateCcw size={16} /> {t("Adjust corners")}
         </button>
         <button
           type="button"
