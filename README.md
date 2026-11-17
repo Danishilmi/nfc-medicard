@@ -311,6 +311,19 @@ process serving both the built frontend and an in-memory stand-in for the API, s
 same demo data as `npm run seed`. It's for a local demo only — the auth "token" it issues has no
 real security, so never deploy this file or expose it beyond your own machine.
 
+### Developing against the offline demo (no Supabase needed)
+
+Run the offline API and the Vite dev server side by side, with live reload:
+
+```bash
+cd server && npm run offline     # API on :4444
+cd client && npm run dev:demo    # http://localhost:5173, forwards /api to :4444
+```
+
+To try camera and NFC features on a phone on the same Wi-Fi, use `npm run dev:phone` instead.
+It serves over HTTPS (phones only allow the camera and Web NFC on secure pages) at
+`https://<your-PC's-IP>:5173`. The certificate is self-signed, so accept the browser warning once.
+
 ## Known limitations / next steps
 
 - Web NFC scanning only works on Android Chrome/Edge over HTTPS (or localhost) — iOS and desktop

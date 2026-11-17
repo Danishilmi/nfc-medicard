@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "vite --mode demo",
+    "dev:phone": "vite --mode phone",
     "build": "vite build",
     "build:offline": "vite build --mode offline --outDir dist-offline",
     "preview": "vite preview"
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.2",
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
